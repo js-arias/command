@@ -24,7 +24,7 @@ import (
 	"github.com/js-arias/command"
 )
 
-func TestSimpleCommand(t *testing.T) {
+func TestCommand(t *testing.T) {
 	tests := map[string]struct {
 		c    *command.Command
 		args []string
@@ -67,6 +67,37 @@ func TestSimpleCommand(t *testing.T) {
 			args: []string{"--help"},
 			err:  "usage: hello [--utf8] [--message <message>]",
 		},
+		"children command": {
+			c:    newApp(),
+			args: []string{"hello"},
+			out:  "hello, world",
+		},
+		"children command (caps)": {
+			c:    newApp(),
+			args: []string{"HELLO", "-message", "caps"},
+			out:  "hello, caps",
+		},
+		"grand children command": {
+			c:    newApp(),
+			args: []string{"cmd", "echo", "print", "arguments"},
+			err:  "print arguments",
+		},
+		"redirecting io": {
+			c:    newApp(),
+			args: []string{"cmd", "cat"},
+			in:   "input\nstring",
+			out:  "input\nstring",
+		},
+		"flag in children": {
+			c:    newApp(),
+			args: []string{"hello", "-utf8"},
+			out:  "hello, 世界",
+		},
+		"children usage": {
+			c:    newApp(),
+			args: []string{"cmd", "cat", "-h"},
+			err:  "usage: app cmd cat",
+		},
 	}
 
 	for name, test := range tests {
@@ -96,7 +127,7 @@ func testExecute(t testing.TB, c *command.Command, args []string, in, out, errOu
 	}
 }
 
-func TestSimpleError(t *testing.T) {
+func TestError(t *testing.T) {
 	tests := map[string]struct {
 		c      *command.Command
 		args   []string
@@ -128,6 +159,31 @@ func TestSimpleError(t *testing.T) {
 				},
 			},
 			errMsg: "err: expecting arguments",
+		},
+		"unknown command": {
+			c:      newApp(),
+			args:   []string{"unknown"},
+			errMsg: "app unknown: unknown command",
+		},
+		"running a help topic": {
+			c:      newApp(),
+			args:   []string{"topic"},
+			errMsg: "app topic: unknown command",
+		},
+		"an error from a command": {
+			c:      newApp(),
+			args:   []string{"error"},
+			errMsg: "app error: an error from a command",
+		},
+		"an error from a command (invalid arguments)": {
+			c:      newApp(),
+			args:   []string{"cmd", "error"},
+			errMsg: "app cmd error: expecting arguments",
+		},
+		"undefined flag": {
+			c:      newApp(),
+			args:   []string{"hello", "--undef"},
+			errMsg: "app hello: flag provided but not defined: -undef",
 		},
 	}
 
@@ -197,4 +253,57 @@ func cmdWithFlags() *command.Command {
 			c.Flags().StringVar(&msg, "message", "world", "sets the greeting message")
 		},
 	}
+}
+
+func newApp() *command.Command {
+	app := &command.Command{
+		Usage: "app <command> [<argument>...]",
+		Short: "app is an app for testing",
+	}
+
+	app.Add(cmdWithFlags())
+
+	errCmd := &command.Command{
+		Usage: "error",
+		Short: "always return an error",
+		Run:   errRun,
+	}
+	app.Add(errCmd)
+
+	topic := &command.Command{
+		Usage: "topic",
+		Short: "a help topic",
+	}
+	app.Add(topic)
+
+	cmd := &command.Command{
+		Usage: "cmd <command> [<argument>...]",
+		Short: "a collection of commands",
+	}
+	app.Add(cmd)
+
+	echo := &command.Command{
+		Usage: "echo <argument>...",
+		Short: "print its arguments",
+		Run:   echoToStderrRun,
+	}
+	cmd.Add(echo)
+
+	cat := &command.Command{
+		Usage: "cat",
+		Short: "print stdin",
+		Run:   inToOutRun,
+	}
+	cmd.Add(cat)
+
+	errCmd = &command.Command{
+		Usage: "error <argument>...",
+		Short: "always return an error",
+		Run: func(c *command.Command, args []string) error {
+			return c.UsageError("expecting arguments")
+		},
+	}
+	cmd.Add(errCmd)
+
+	return app
 }
