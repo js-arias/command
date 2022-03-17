@@ -246,8 +246,9 @@ func (c *Command) Main() {
 	err := c.Execute(os.Args[1:])
 	if errors.Is(err, usageError{}) {
 		fmt.Fprintf(c.Stderr(), "%v\n", err)
-		c.usage(c.Stderr())
-		fmt.Fprintf(c.Stderr(), "Run %q for details.\n", err.(usageError).c.helpPath())
+		from := err.(usageError).c
+		from.usage(c.Stderr())
+		fmt.Fprintf(c.Stderr(), "Run %q for details.\n", from.helpPath())
 		os.Exit(1)
 	}
 	if err != nil {
