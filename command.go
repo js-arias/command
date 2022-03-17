@@ -46,8 +46,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 // A Command is a command in an application
@@ -156,6 +159,7 @@ func (c *Command) Add(child *Command) {
 func (c *Command) Execute(args []string) error {
 	// initialize flags
 	c.flags = flag.NewFlagSet(c.name(), flag.ContinueOnError)
+	c.flags.SetOutput(io.Discard) // do not print flag errors
 	c.flags.Usage = func() {}
 	if c.SetFlags != nil {
 		c.SetFlags(c)
@@ -164,6 +168,14 @@ func (c *Command) Execute(args []string) error {
 	// parse flags
 	err := c.flags.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
+		if c.hasChildren() {
+			help(c.Stderr(), c)
+			return nil
+		}
+		if c.Run == nil {
+			help(c.Stdout(), c)
+			return nil
+		}
 		c.usage(c.Stderr())
 		return nil
 	}
@@ -190,14 +202,21 @@ func (c *Command) Execute(args []string) error {
 	}
 
 	if len(args) == 0 {
+		help(c.Stderr(), c)
 		return nil
 	}
 	child, ok := c.child(args[0])
 	if !ok {
-		return usageError{
-			c:   c,
-			msg: fmt.Sprintf("%s %s: unknown command", c.longName(), args[0]),
+		if strings.ToLower(args[0]) != "help" {
+			return usageError{
+				c:   c,
+				msg: fmt.Sprintf("%s %s: unknown command", c.longName(), args[0]),
+			}
 		}
+		if err := c.help(args[1:]); err != nil {
+			return err
+		}
+		return nil
 	}
 	if err := child.Execute(args[1:]); err != nil {
 		return err
@@ -287,6 +306,34 @@ func (c *Command) child(name string) (*Command, bool) {
 	return child, ok
 }
 
+// Children returns the names
+// of the children Commands.
+func (c *Command) children() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var children []string
+	for _, c := range c.commands {
+		children = append(children, c.name())
+	}
+	sort.Strings(children)
+	return children
+}
+
+// Help prints the help message of the Command.
+func (c *Command) help(args []string) error {
+	if len(args) == 0 {
+		help(c.Stdout(), c)
+		return nil
+	}
+
+	child, ok := c.child(args[0])
+	if !ok {
+		return fmt.Errorf("%s %s: unknown help topic. Run %q", c.helpPath(), strings.Join(args, " "), c.helpPath())
+	}
+	return child.help(args[1:])
+}
+
 // LongName returns the Command's long name,
 // i.e. the name of the Command and all of its parents.
 func (c *Command) longName() string {
@@ -295,6 +342,16 @@ func (c *Command) longName() string {
 		name = fmt.Sprintf("%s %s", p.name(), name)
 	}
 	return name
+}
+
+// LongUsage returns the Command's full usage line,
+// i.e. the usage line including all of its parents.
+func (c *Command) longUsage() string {
+	usage := c.Usage
+	for p := c.parent; p != nil; p = p.parent {
+		usage = fmt.Sprintf("%s %s", p.name(), usage)
+	}
+	return usage
 }
 
 // Name returns the Command's name.
@@ -315,16 +372,22 @@ func (c *Command) hasChildren() bool {
 	return len(c.commands) > 0
 }
 
+// HelpPath returns the help path of the Command.
+func (c *Command) helpPath() string {
+	var path []string
+	for p := c; p != nil; p = p.parent {
+		path = append([]string{p.name()}, path...)
+	}
+	path = append([]string{path[0], "help"}, path[1:]...)
+	return strings.Join(path, " ")
+}
+
 // Usage prints the Command's usage.
 func (c *Command) usage(w io.Writer) {
 	if c.Run == nil {
 		return
 	}
-	usage := c.Usage
-	for p := c.parent; p != nil; p = p.parent {
-		usage = fmt.Sprintf("%s %s", p.name(), usage)
-	}
-	fmt.Fprintf(w, "usage: %s\n", usage)
+	fmt.Fprintf(w, "usage: %s\n", c.longUsage())
 }
 
 type usageError struct {
@@ -341,4 +404,62 @@ func (e usageError) Is(target error) bool {
 		return true
 	}
 	return false
+}
+
+// Help prints the help of a command on w.
+func help(w io.Writer, c *Command) {
+	fmt.Fprintf(w, "%s\n\n", toTitle(c.Short))
+	if c.Run != nil || c.hasChildren() {
+		fmt.Fprintf(w, "Usage:\n\n    %s\n\n", c.longUsage())
+	}
+
+	if long := strings.TrimSpace(c.Long); long != "" {
+		fmt.Fprintf(w, "%s\n\n", long)
+	}
+
+	if !c.hasChildren() {
+		return
+	}
+
+	children := c.children()
+	topics := false
+	fmt.Fprintf(w, "The commands are:\n\n")
+	for _, n := range children {
+		cmd, ok := c.child(n)
+		if !ok {
+			continue
+		}
+		if cmd.Run == nil && !cmd.hasChildren() {
+			topics = true
+			continue
+		}
+		fmt.Fprintf(w, "    %-16s %s\n", cmd.name(), cmd.Short)
+	}
+	hp := c.helpPath()
+	fmt.Fprintf(w, "\nUse %q for more information about a command.\n\n", hp+" <command>")
+
+	if !topics {
+		return
+	}
+	fmt.Fprintf(w, "Additional help topics:\n\n")
+	for _, n := range children {
+		t, ok := c.child(n)
+		if !ok {
+			continue
+		}
+		if t.Run != nil || t.hasChildren() {
+			continue
+		}
+		fmt.Fprintf(w, "    %-16s %s\n", t.name(), t.Short)
+	}
+	fmt.Fprintf(w, "\nUse %q for more information about that topic.\n\n", hp+" <topic>")
+}
+
+func toTitle(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if s == "" {
+		return ""
+	}
+	r, i := utf8.DecodeRuneInString(s)
+	return string(unicode.ToTitle(r)) + s[i:]
 }

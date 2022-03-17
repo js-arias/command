@@ -240,6 +240,10 @@ func cmdWithFlags() *command.Command {
 	return &command.Command{
 		Usage: "hello [--utf8] [--message <message>]",
 		Short: "print a hello message",
+		Long: `
+Command hello prints the well known "hello, world" message, or if --message
+flag is defined, a personalized hello message.
+		`,
 		Run: func(c *command.Command, args []string) error {
 			if utf {
 				fmt.Fprintf(c.Stdout(), "hello, 世界\n")
@@ -273,6 +277,7 @@ func newApp() *command.Command {
 	topic := &command.Command{
 		Usage: "topic",
 		Short: "a help topic",
+		Long:  "A help topic is a non-runnable command used only for documentation.",
 	}
 	app.Add(topic)
 
@@ -292,6 +297,7 @@ func newApp() *command.Command {
 	cat := &command.Command{
 		Usage: "cat",
 		Short: "print stdin",
+		Long:  "Command cat is used to print the content of the stdin into the stdout.",
 		Run:   inToOutRun,
 	}
 	cmd.Add(cat)
