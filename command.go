@@ -229,6 +229,33 @@ func (c *Command) Flags() *flag.FlagSet {
 	return c.flags
 }
 
+// Main executes a Command
+// using the IS command line arguments.
+// If an error happens when executing the Command,
+// it will print the error
+// in the programs' standard error,
+// and finish the application.
+//
+// Main will panic if the Command is not a root Command.
+func (c *Command) Main() {
+	if c.parent != nil {
+		msg := fmt.Sprintf("command %q: running Main in a command with parent", c.longName())
+		panic(msg)
+	}
+
+	err := c.Execute(os.Args[1:])
+	if errors.Is(err, usageError{}) {
+		fmt.Fprintf(c.Stderr(), "%v\n", err)
+		c.usage(c.Stderr())
+		fmt.Fprintf(c.Stderr(), "Run %q for details.\n", err.(usageError).c.helpPath())
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(c.Stderr(), "%v.\n", err)
+		os.Exit(1)
+	}
+}
+
 // SetStderr sets the Command's standard error.
 func (c *Command) SetStderr(w io.Writer) {
 	c.stderr = w
