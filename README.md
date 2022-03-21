@@ -102,7 +102,7 @@ and does not have any children,
 it is called a *help topic*,
 and is used only for documentation.
 
-See directory [example/myapp](example/myapp)
+See directory [examples/myapp](https://github.com/js-arias/command/tree/main/examples/myapp)
 for a demonstration application.
 
 Package `command` is intentionally simple,
